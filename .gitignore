@@ -1,2 +1,24 @@
 .venv/
+.venv-train/
 .claude/
+
+# Personal corpus, index, traces — never commit (CLAUDE.md safety rules)
+data/
+*.gguf
+*.sqlite
+*.sqlite3
+*.db
+
+# Secrets
+.env
+.env.*
+
+# Training artefacts
+out/
+merged/
+runs/
+wandb/
+
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/

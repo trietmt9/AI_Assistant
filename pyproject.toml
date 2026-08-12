@@ -1,0 +1,73 @@
+[project]
+name = "assistant"
+version = "0.1.0"
+description = "Evelyn — a local-first, voice-driven personal assistant"
+requires-python = ">=3.12"
+
+# Core is deliberately tiny: only what BOTH the server and the laptop client
+# need. PLAN.md §2 -- the remote client must not drag in torch, lancedb or
+# docling, which are ~3 GB and exist purely to serve. `uv tool install` on the
+# laptop should take seconds.
+dependencies = [
+    "pydantic>=2",
+    "pydantic-settings",
+    "httpx",
+    "typer",
+    "rich",
+]
+
+[project.optional-dependencies]
+# The agent loop itself (phase 2). Server-side only.
+agent = [
+    "pydantic-ai",
+    "prompt_toolkit",
+    "sympy",
+    "pint",
+]
+# Phase 1: ingestion + retrieval. docling is heavy and pulls torch.
+retrieval = [
+    "lancedb",
+    "sentence-transformers",
+    "docling",
+    "tantivy",
+]
+# Phase 3: the server -- HTTP/WebSocket endpoint plus speech. GPU box only.
+server = [
+    "fastapi",
+    "uvicorn[standard]",
+    "faster-whisper",
+    "piper-tts",
+    "onnxruntime",
+]
+# The laptop client. Keep this list short; every addition is paid on install.
+client = [
+    "sounddevice",
+    "websockets",
+    "numpy",
+]
+# Hands-free on the laptop. Needs `client` too.
+wake = [
+    "openwakeword",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[project.scripts]
+eve = "assistant.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["assistant"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

@@ -1,0 +1,32 @@
+[
+  {
+    "model": "qwen3.6:27b-mtp-q4_K_M",
+    "ttft_s": 4.292855105000001,
+    "tok_per_s": 44.84143148336051,
+    "load_s": 55.653457641,
+    "peak_vram_mib": 18653,
+    "tool_correct": 21,
+    "tool_malformed": 0,
+    "over_called": 0,
+    "under_called": 1,
+    "total_scenarios": 22,
+    "notes": [
+      "no call, wanted calendar_create: 'Book me a dentist appointment Thursday at 3pm.'"
+    ]
+  },
+  {
+    "model": "qwen3.5:27b",
+    "ttft_s": 4.05034765100001,
+    "tok_per_s": 28.30959681025036,
+    "load_s": 19.390953200999974,
+    "peak_vram_mib": 17801,
+    "tool_correct": 21,
+    "tool_malformed": 0,
+    "over_called": 0,
+    "under_called": 1,
+    "total_scenarios": 22,
+    "notes": [
+      "no call, wanted calendar_create: 'Schedule a two-hour deep work block tomorrow morning.'"
+    ]
+  }
+]
