@@ -26,6 +26,31 @@ MIC_RATE = 16_000  # what the server's Whisper expects
 BLOCK = 1024
 
 
+def _audio_device(sd) -> int | None:
+    """Pick a device that will actually accept 16 kHz mono.
+
+    PortAudio's idea of the default device on Linux is frequently a bare ALSA
+    `hw:` node, which accepts only its card's native rate -- 48 kHz on the
+    workstation -- and answers anything else with `Invalid sample rate
+    [PaErrorCode -9997]`. It also picks per-direction, so the default *output*
+    can land on HDMI while the user's speakers are on the analogue codec.
+
+    The PulseAudio/PipeWire device has neither problem: it resamples
+    transparently and follows whatever default source and sink the desktop is
+    actually using. Prefer it, fall back to PortAudio's default, and let
+    `EVELYN_AUDIO_DEVICE` override both.
+    """
+    override = os.environ.get("EVELYN_AUDIO_DEVICE")
+    if override:
+        return int(override) if override.isdigit() else sd.query_devices(override)["index"]
+    for name in ("pipewire", "pulse"):
+        try:
+            return sd.query_devices(name)["index"]
+        except ValueError:  # sounddevice's "no device matching ..."
+            continue
+    return None  # None means "PortAudio default" to sounddevice
+
+
 @dataclass(slots=True)
 class RemoteConfig:
     url: str
@@ -151,6 +176,7 @@ async def voice_turn(cfg: RemoteConfig, *, seconds: float = 0.0, on_event=None) 
             "`eve remote` (text) needs none of this and works already."
         ) from exc
 
+    device = _audio_device(sd)
     events: dict = {}
     frames: list[bytes] = []
 
@@ -171,7 +197,7 @@ async def voice_turn(cfg: RemoteConfig, *, seconds: float = 0.0, on_event=None) 
         emit({"type": "recording"})
         with sd.RawInputStream(
             samplerate=MIC_RATE, blocksize=BLOCK, dtype="int16",
-            channels=1, callback=callback,
+            channels=1, callback=callback, device=device,
         ):
             if seconds > 0:
                 await _sleep(seconds)
@@ -194,7 +220,8 @@ async def voice_turn(cfg: RemoteConfig, *, seconds: float = 0.0, on_event=None) 
                 if isinstance(message, bytes):
                     if stream is None:
                         stream = sd.RawOutputStream(
-                            samplerate=sample_rate, channels=1, dtype="int16"
+                            samplerate=sample_rate, channels=1, dtype="int16",
+                            device=device,
                         )
                         stream.start()
                     stream.write(message)
