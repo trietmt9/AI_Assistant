@@ -1,0 +1,14 @@
+# Never ship the corpus, index, traces or model weights into an image.
+# data/ is ~7 GB and holds personal research documents (CLAUDE.md safety rules).
+data/
+.venv/
+.venv-train/
+.git/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+eval/bakeoff_results.json
+scripts/
+*.log

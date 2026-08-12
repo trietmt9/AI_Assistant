@@ -22,9 +22,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -39,26 +41,62 @@ log = logging.getLogger(__name__)
 _state: dict = {}
 
 
+def use_cached_models_only() -> bool:
+    """Skip HuggingFace's "is there a newer version?" check when models are local.
+
+    `sentence-transformers` and `faster-whisper` each round-trip to huggingface.co
+    on load even when fully cached. Measured 2026-08-12: **~4 s of the ~14 s
+    startup**, plus the "sending unauthenticated requests to the HF Hub" warnings.
+
+    Only enabled when the caches actually exist, so a first run can still
+    download. An explicit `HF_HUB_OFFLINE` in the environment always wins.
+    """
+    if "HF_HUB_OFFLINE" in os.environ:
+        return False
+
+    hub = Path.home() / ".cache" / "huggingface" / "hub"
+    needed = ["models--BAAI--bge-m3", f"models--Systran--faster-whisper-{settings.stt_model}"]
+    if all((hub / name).exists() for name in needed):
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        return True
+    return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Warm everything before accepting traffic.
 
     A cold Whisper load or Piper voice download in the middle of the first
     utterance is several seconds, and that is precisely when the latency budget
-    gets judged.
+    gets judged. Measured warm-up, 2026-08-12:
+
+        bge-m3     ~7 s   (568M model off disk; the dominant cost)
+        whisper    ~1.5 s
+        piper      ~1 s
+
+    Set `EVELYN_WARM_ON_START=false` to skip it. The models then load on first
+    use instead — good for iterating on server code, bad for measuring latency.
     """
     from assistant.retrieval.search import Retriever
     from assistant.voice import stt, tts
 
     _state["token"] = load_or_create_token()
-    log.info("warming retrieval...")
-    _state["retriever"] = Retriever()
-    _state["retriever"].search("warm", k=1)
+    started = time.perf_counter()
 
-    log.info("warming speech...")
-    await asyncio.get_running_loop().run_in_executor(None, stt.warm)
-    await asyncio.get_running_loop().run_in_executor(None, tts.warm)
-    _state["sample_rate"] = tts.sample_rate()
+    log.info("opening index...")
+    _state["retriever"] = Retriever()
+
+    if settings.warm_on_start:
+        loop = asyncio.get_running_loop()
+        log.info("warming embeddings (~7 s)...")
+        await loop.run_in_executor(None, lambda: _state["retriever"].search("warm", k=1))
+        log.info("warming speech (~3 s)...")
+        await loop.run_in_executor(None, stt.warm)
+        await loop.run_in_executor(None, tts.warm)
+        _state["sample_rate"] = tts.sample_rate()
+        log.info("warmed in %.1fs", time.perf_counter() - started)
+    else:
+        log.warning("warm-up skipped; the first request will be slow")
 
     log.info("ready on %s:%s", settings.server_host, settings.server_port)
     yield

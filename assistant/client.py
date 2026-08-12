@@ -132,9 +132,24 @@ async def voice_turn(cfg: RemoteConfig, *, seconds: float = 0.0, on_event=None) 
     take the microphone directly — which is also what makes a real wake word
     possible later (§5).
     """
-    import numpy as np
-    import sounddevice as sd
-    import websockets
+    try:
+        import numpy as np
+        import sounddevice as sd
+        import websockets
+    except ImportError as exc:
+        # `uv tool install` builds its own isolated environment and does NOT
+        # install optional extras -- so a numpy sitting in some project venv is
+        # invisible here. Say that, rather than emitting a bare ImportError that
+        # sends people hunting through the wrong virtualenv.
+        raise SystemExit(
+            f"Voice needs the `client` extra ({exc.name} is missing).\n\n"
+            "Reinstall with it:\n"
+            '  uv tool install --force "assistant[client] @ /path/to/AI_Assistant"\n\n'
+            "Or add just the missing pieces to the existing tool env:\n"
+            "  uv tool install --force --with numpy --with sounddevice "
+            "--with websockets assistant\n\n"
+            "`eve remote` (text) needs none of this and works already."
+        ) from exc
 
     events: dict = {}
     frames: list[bytes] = []

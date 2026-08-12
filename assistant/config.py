@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # serve` if unset and written to data/, so there is no unauthenticated mode
     # to forget to turn off.
     server_token: str = ""
+    # Load the models at startup rather than on the first request. Costs ~14 s
+    # of boot to save the first user several seconds. Turn off while iterating
+    # on server code.
+    warm_on_start: bool = True
 
     # --- speech (PLAN.md §5) ------------------------------------------
     #

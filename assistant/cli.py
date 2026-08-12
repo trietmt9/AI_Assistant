@@ -256,20 +256,62 @@ def ask(
     trace_store.close()
 
 
+def _tailscale_ip() -> str | None:
+    """This machine's tailnet address, if Tailscale is up.
+
+    Binding here rather than to `0.0.0.0` is the whole security posture: the
+    tailnet is private and authenticated, while this host's real address is
+    globally routable with no NAT (PLAN.md §2).
+    """
+    import shutil
+    import subprocess
+
+    if not shutil.which("tailscale"):
+        return None
+    try:
+        out = subprocess.run(
+            ["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5
+        )
+    except Exception:
+        return None
+    if out.returncode != 0:
+        return None
+    addr = out.stdout.strip().splitlines()
+    return addr[0].strip() if addr and addr[0].strip() else None
+
+
 @app.command()
 def serve(
     host: str = typer.Option(None, help="Bind address. NEVER 0.0.0.0 on this host."),
     port: int = typer.Option(None, help="Port"),
+    tailscale: bool = typer.Option(
+        False, "--tailscale", help="Bind to this machine's tailnet address"
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Run the server the laptop and phone connect to (PLAN.md §2)."""
     _setup_logging(True if verbose else False)
     import uvicorn
 
+    from assistant.server.app import use_cached_models_only
     from assistant.server.auth import load_or_create_token, token_path
+
+    offline = use_cached_models_only()
 
     bind = host or settings.server_host
     bind_port = port or settings.server_port
+
+    if tailscale:
+        ts = _tailscale_ip()
+        if not ts:
+            console.print(
+                "[red]Tailscale is installed but not connected.[/]\n\n"
+                "Run [bold]sudo tailscale up[/] and follow the login URL, then retry.\n"
+                "[dim]`tailscale ip -4` should print a 100.x address when it is ready.[/]"
+            )
+            raise typer.Exit(1)
+        bind = ts
+        console.print(f"[green]binding to tailnet address {ts}[/]")
 
     # Preflight the bind. uvicorn's own failure is a bare `[Errno 98] address
     # already in use` after ~30 s of warming Whisper and Piper, which reads as a
@@ -299,6 +341,10 @@ def serve(
     console.print(Panel(BANNER, border_style="cyan"))
     console.print(f"  bind   [bold]{bind}:{bind_port}[/]")
     console.print(f"  token  [dim]{token_path()}[/]")
+    if offline:
+        console.print("  [dim]models: local cache only (no HF round-trip)[/]")
+    if settings.warm_on_start:
+        console.print("  [dim]warming models, ~15s — first request will be fast[/]")
 
     if bind == "0.0.0.0":  # noqa: S104 — the whole point is to warn about it
         console.print(
@@ -316,6 +362,26 @@ def serve(
         port=bind_port,
         log_level="info" if verbose else "warning",
     )
+
+
+@app.command("prepare-models")
+def prepare_models(
+    force: bool = typer.Option(False, help="Rebuild even if it already exists"),
+) -> None:
+    """Convert bge-m3 to safetensors for fast startup (run once).
+
+    The HuggingFace cache ships `pytorch_model.bin`, a 2.2 GB legacy pickle that
+    must be fully deserialised on every load. A local safetensors copy is mmapped
+    instead: **5.9 s -> 1.4 s**, measured. Costs 2.2 GB of disk.
+    """
+    _setup_logging(True)
+    from assistant.retrieval.embed import make_local_copy
+
+    with console.status("converting bge-m3 to safetensors..."):
+        path = make_local_copy(force=force)
+    size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / 2**30
+    console.print(f"[green]ready[/] {path} ({size:.1f} GB)")
+    console.print("[dim]startup will now load embeddings ~4x faster[/]")
 
 
 @app.command()

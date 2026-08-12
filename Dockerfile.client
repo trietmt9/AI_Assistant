@@ -1,0 +1,75 @@
+# Evelyn laptop client.
+#
+# NOTE: `CLAUDE.md` says no Docker on the workstation, and that still holds —
+# this image is for the **client** side only, built and run on the laptop. The
+# server needs the GPU, the 27B and the corpus, none of which belong in a
+# container here.
+#
+# Build:
+#   docker build -f Dockerfile.client -t evelyn-client .
+#
+# Text (works everywhere):
+#   docker run --rm -it \
+#     -e EVELYN_SERVER_URL=http://100.75.227.108:8080 \
+#     -e EVELYN_SERVER_TOKEN=... \
+#     evelyn-client remote "what did my notes say about LOSO?"
+#
+# Voice — needs the host's microphone and speaker, see the caveat at the bottom:
+#   docker run --rm -it \
+#     --device /dev/snd \
+#     -e EVELYN_SERVER_URL=http://100.75.227.108:8080 \
+#     -e EVELYN_SERVER_TOKEN=... \
+#     evelyn-client talk
+#
+# The image is deliberately small: no torch, no lancedb, no docling. Those are
+# ~3 GB of serving dependencies and the client has no use for them (PLAN.md §2).
+
+FROM python:3.12-slim
+
+# `sounddevice` binds PortAudio at import time, so the shared library must exist
+# even for `eve remote`, which never records anything. libsndfile comes along
+# for file playback. Kept to these two — every extra package is paid on `docker
+# build` and on image size.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libportaudio2 \
+        libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the metadata first so dependency installation is cached independently of
+# source changes: editing `client.py` then rebuilds in seconds rather than
+# re-resolving every dependency.
+COPY pyproject.toml README.md* ./
+COPY assistant/__init__.py ./assistant/
+
+RUN pip install --no-cache-dir uv \
+    && uv pip install --system --no-cache '.[client]'
+
+COPY assistant/ ./assistant/
+
+# Config normally lives at ~/.config/evelyn/config.toml. In a container the
+# env vars are easier and leave no state behind; mount the file instead if you
+# prefer (`-v ~/.config/evelyn:/root/.config/evelyn:ro`).
+ENV EVELYN_SERVER_URL="" \
+    EVELYN_SERVER_TOKEN="" \
+    PYTHONUNBUFFERED=1
+
+ENTRYPOINT ["python", "-m", "assistant.cli"]
+CMD ["--help"]
+
+# ---------------------------------------------------------------------------
+# Audio in containers is genuinely awkward — read before relying on `talk`.
+#
+#   * Linux host: `--device /dev/snd` usually works with ALSA. If the host runs
+#     PulseAudio or PipeWire (most desktops do), you also need the socket:
+#       -v /run/user/$(id -u)/pulse:/run/user/1000/pulse \
+#       -e PULSE_SERVER=unix:/run/user/1000/pulse/native
+#   * macOS and Windows: Docker Desktop runs a Linux VM with **no host audio
+#     passthrough**. `talk` cannot work there. Use `eve remote` in the container
+#     and install the CLI natively for voice.
+#
+# Which is the honest argument against containerising this at all: the client's
+# whole job is touching a microphone and a speaker, and containers are built to
+# prevent exactly that. `uv tool install "assistant[client] @ ."` is one command,
+# needs no daemon, and gets audio for free.
